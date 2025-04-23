@@ -1,0 +1,115 @@
+version: '3.8'
+
+services:
+  # База данных PostgreSQL
+  db:
+    image: postgres:14-alpine
+    container_name: office-desk-booking-db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    env_file:
+      - ./.env
+    environment:
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_DB=${DB_NAME:-office_desk_booking}
+
+  # Redis для каналов и кеширования
+  redis:
+    image: redis:7-alpine
+    container_name: office-desk-booking-redis
+    volumes:
+      - redis_data:/data
+
+  # Backend на Django
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile
+    container_name: office-desk-booking-backend
+    restart: always
+    depends_on:
+      - db
+      - redis
+    env_file:
+      - ./.env
+    volumes:
+      - ./backend:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py collectstatic --noinput &&
+             daphne -b 0.0.0.0 -p 8000 config.asgi:application"
+
+  # Celery worker для фоновых задач
+  celery:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile
+    container_name: office-desk-booking-celery
+    restart: always
+    depends_on:
+      - db
+      - redis
+      - backend
+    env_file:
+      - ./.env
+    volumes:
+      - ./backend:/app
+    command: celery -A config worker -l INFO
+
+  # Celery beat для периодических задач
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile
+    container_name: office-desk-booking-celery-beat
+    restart: always
+    depends_on:
+      - db
+      - redis
+      - backend
+    env_file:
+      - ./.env
+    volumes:
+      - ./backend:/app
+    command: celery -A config beat -l INFO
+
+  # Frontend на React
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/frontend/Dockerfile
+    container_name: office-desk-booking-frontend
+    restart: always
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - REACT_APP_API_URL=${API_URL:-http://localhost:8000}
+      - REACT_APP_WS_URL=${WS_URL:-ws://localhost:8000}
+      - REACT_APP_TELEGRAM_BOT_NAME=${TELEGRAM_BOT_NAME:-your_bot_name}
+
+  # Nginx для проксирования запросов
+  nginx:
+    build:
+      context: ./docker/nginx
+    container_name: office-desk-booking-nginx
+    restart: always
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+    volumes:
+      - static_volume:/var/html/static
+      - media_volume:/var/html/media
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_volume:
+  media_volume:

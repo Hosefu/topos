@@ -18,6 +18,7 @@ COPY . /app/
 
 # Создаем директории для статических и медиа файлов
 RUN mkdir -p /app/staticfiles /app/media
+RUN chmod -R 777 /app/staticfiles /app/media
 
 # Пользователь без привилегий root
 RUN useradd -m user
